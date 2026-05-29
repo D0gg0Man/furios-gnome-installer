@@ -1,0 +1,8 @@
+{
+  "name": "GNOME Mali Lock Screen",
+  "description": "Lock screen for GNOME Mali session (no GDM required)",
+  "uuid": "gnome-mali-lock@furios",
+  "version": 1,
+  "shell-version": ["49", "49.2"],
+  "url": ""
+}
