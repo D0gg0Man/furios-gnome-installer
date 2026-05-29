@@ -50,6 +50,6 @@ Enable with: `G_MESSAGES_DEBUG=all`
 - eglplatform_drmadapter.so - hybris EGL platform for HWC2
 - gbm_hybris.so - GBM backend using hybris gralloc
 - drm_shim.so - DRM ioctl interceptor for mutter KMS
-- wlegl_server.so - android_wlegl injector for Andromeda
+- wlegl_server.so - android_wlegl injector for applications
 - vulkan_x11_stub.so - Vulkan X11 stub for GTK4
 - libEGL_libhybris.so.0.0.0 - patched libhybris EGL
