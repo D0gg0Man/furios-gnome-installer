@@ -35,9 +35,16 @@ fi
 REQUIRED=(
     libEGL_libhybris.so.0.0.0
     eglplatform_drmadapter.so
-    drm_shim.so
+    eglplatform_drmadapter_client.so
+    libdrm-hybris.so
+    rendernode-shim.so
+    xifevent-shim.so
     wlegl_server.so
     vulkan_x11_stub.so
+    gnome-mali-session
+    brave-gpu
+    Xwayland-wrapper
+    brave-browser-stable-wrapper
     gnome-mali-lock-extension.js
     gnome-mali-lock-metadata.json
     gnome-mali-power-daemon
@@ -82,95 +89,103 @@ ldconfig
 # -----------------------------------------------------------------------------
 # Step 2 — drmadapter hybris EGL platform + shim libraries
 # -----------------------------------------------------------------------------
-echo "[2/7] Installing drmadapter platform and shim libraries..."
-backup /usr/local/lib/drm_shim.so
+echo "[2/8] Installing drmadapter platform and shim libraries..."
+backup /usr/lib/aarch64-linux-gnu/libdrm-hybris.so
 backup /usr/local/lib/wlegl_server.so
 backup /usr/local/lib/vulkan_x11_stub.so
+backup /usr/local/lib/rendernode-shim.so
+backup /usr/local/lib/xifevent-shim.so
 
 mkdir -p "$HYBRIS_PLATFORM_DIR"
-cp "$INSTALL_DIR/eglplatform_drmadapter.so" /tmp/_drmadapter.so
-mv /tmp/_drmadapter.so "$HYBRIS_PLATFORM_DIR/eglplatform_drmadapter.so"
-chown root:root "$HYBRIS_PLATFORM_DIR/eglplatform_drmadapter.so"
-chmod 755 "$HYBRIS_PLATFORM_DIR/eglplatform_drmadapter.so"
+install -m 755 -o root -g root "$INSTALL_DIR/eglplatform_drmadapter.so" \
+    "$HYBRIS_PLATFORM_DIR/eglplatform_drmadapter.so"
 
-cp "$INSTALL_DIR/drm_shim.so"       /tmp/_drm_shim.so
-mv /tmp/_drm_shim.so    /usr/local/lib/drm_shim.so
-cp "$INSTALL_DIR/wlegl_server.so"   /tmp/_wlegl.so
-mv /tmp/_wlegl.so       /usr/local/lib/wlegl_server.so
-cp "$INSTALL_DIR/vulkan_x11_stub.so" /tmp/_vk_stub.so
-mv /tmp/_vk_stub.so     /usr/local/lib/vulkan_x11_stub.so
+# Client-mode drmadapter. HWC2 allows one composer client per system and the
+# compositor holds it, so any other process that loads the normal platform
+# aborts in libhwc2_compat_layer ("failed to create composer client"). This
+# build skips HWC2 init when it is not the compositor. It is installed
+# separately and selected per-process with HYBRIS_EGLPLATFORM_DIR, leaving the
+# compositor's own copy untouched.
+install -d -m 755 /usr/local/lib/drmadapter-client
+install -m 755 "$INSTALL_DIR/eglplatform_drmadapter_client.so" \
+    /usr/local/lib/drmadapter-client/eglplatform_drmadapter.so
 
-# -----------------------------------------------------------------------------
+# libdrm-hybris replaces the older drm_shim.so: same job, but it also carries
+# the panel-power path, the synthetic page-flip completions and the KWin/phoc
+# compatibility paths.
+install -m 755 "$INSTALL_DIR/libdrm-hybris.so" /usr/lib/aarch64-linux-gnu/libdrm-hybris.so
+install -m 755 "$INSTALL_DIR/wlegl_server.so"    /usr/local/lib/wlegl_server.so
+install -m 755 "$INSTALL_DIR/vulkan_x11_stub.so" /usr/local/lib/vulkan_x11_stub.so
+install -m 755 "$INSTALL_DIR/rendernode-shim.so" /usr/local/lib/rendernode-shim.so
+install -m 755 "$INSTALL_DIR/xifevent-shim.so"   /usr/local/lib/xifevent-shim.so
+
+# Retire the superseded shim so both cannot be preloaded at once.
+rm -f /usr/local/lib/drm_shim.so
+
 # Step 3 — /etc/ld.so.preload
-# Only vulkan_x11_stub.so is preloaded system-wide (for GTK4 apps).
-# drm_shim.so and wlegl_server.so are loaded only in the gnome-mali session
-# wrapper via LD_PRELOAD, to avoid injecting hybris into Chromium-based
-# browsers whose GPU sandbox cannot access the hybris linker.
+# libdrm-hybris must be system-wide: it stands in for libseat as well, and its
+# interception is inert outside a compositor (it checks /proc/self/exe).
+# Everything else is session-only, loaded from the session wrapper, to avoid
+# injecting hybris into Chromium GPU sandboxes that cannot reach the hybris
+# linker. vulkan_x11_stub.so is installed but not preloaded -- the working
+# device does not need it in ld.so.preload.
 # -----------------------------------------------------------------------------
-echo "[3/7] Configuring ld.so.preload..."
+echo "[3/8] Configuring ld.so.preload..."
 backup /etc/ld.so.preload
 
 touch /etc/ld.so.preload
-sed -i '\|/usr/local/lib/drm_shim.so|d'    /etc/ld.so.preload
+sed -i '\|/usr/local/lib/drm_shim.so|d'     /etc/ld.so.preload
 sed -i '\|/usr/local/lib/wlegl_server.so|d' /etc/ld.so.preload
-grep -qxF '/usr/local/lib/vulkan_x11_stub.so' /etc/ld.so.preload || \
-    echo '/usr/local/lib/vulkan_x11_stub.so' >> /etc/ld.so.preload
+grep -qxF '/usr/lib/aarch64-linux-gnu/libdrm-hybris.so' /etc/ld.so.preload || \
+    echo '/usr/lib/aarch64-linux-gnu/libdrm-hybris.so' >> /etc/ld.so.preload
 
-# -----------------------------------------------------------------------------
 # Step 4 — Session wrapper
 # No vendor swap needed — libhybris routes GBM to drmadapter natively
 # -----------------------------------------------------------------------------
-echo "[4/7] Installing session wrapper..."
+echo "[4/8] Installing session wrapper..."
 backup /usr/libexec/gnome-mali-session
 
-cat > /usr/libexec/gnome-mali-session << 'SCRIPT'
-#!/bin/bash
-# GNOME Mali session launcher — called by greetd via gnome-mali.desktop
-#
-# Pipeline:
-#   mutter → libEGL_libhybris.so (patched) → eglplatform_drmadapter.so → HWC2
-#
-# Uses gnome-session to properly start all GSD services including
-# gsd-power (screen lock) and gsd-media-keys.
+# Shipped as a file rather than a heredoc: this is the exact script running on a
+# working device, so the two cannot drift.
+install -m 755 "$INSTALL_DIR/gnome-mali-session" /usr/libexec/gnome-mali-session
 
-export GBM_BACKEND=hybris
-export GBM_BACKENDS_PATH=/usr/lib/aarch64-linux-gnu/gbm
-export GSK_RENDERER=gl
-export GDK_BACKEND=wayland
-export GDK_GL=gles
-export XDG_CURRENT_DESKTOP=GNOME
-export XDG_SESSION_DESKTOP=gnome
-export XDG_SESSION_TYPE=wayland
-export MUTTER_DEBUG_FORCE_KMS_MODE=simple
-export HYBRIS_EGLPLATFORM=drmadapter
-unset WLR_BACKENDS WLR_HWC_SKIP_VERSION_CHECK EGL_PLATFORM
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Step 4b — Xwayland and Brave wrappers
+#
+# Xwayland: it initialises hybris EGL, which routes to drmadapter, which tries
+# to take the single HWC2 composer client the compositor already holds --
+# libhwc2_compat_layer does not fail gracefully, it aborts. Xwayland then dies
+# the moment any X11 client appears, and mutter, focusing a Wayland window with
+# timestamp 0, does an X11 round-trip that never returns and spins at 100% until
+# the session is killed. Pointing Xwayland at the client-mode drmadapter avoids
+# the abort; xifevent-shim in the session wrapper bounds the round-trip so a
+# dead X server cannot hang the compositor either way.
+#
+# Brave: Chromium needs a DRM render node, which this hardware has none of.
+# Optional -- skipped when Brave is not installed.
+# -----------------------------------------------------------------------------
+echo "[4b/8] Installing Xwayland and browser wrappers..."
 
-# Set LD_PRELOAD cleanly, preserving any existing system entries
-MALI_PRELOAD="/usr/local/lib/drm_shim.so:/usr/local/lib/wlegl_server.so:/usr/local/lib/vulkan_x11_stub.so"
-if [ -n "$LD_PRELOAD" ]; then
-    export LD_PRELOAD="$MALI_PRELOAD:$LD_PRELOAD"
-else
-    export LD_PRELOAD="$MALI_PRELOAD"
+if [ -f /usr/bin/Xwayland ] && [ ! -f /usr/bin/Xwayland.real ]; then
+    backup /usr/bin/Xwayland
+    mv /usr/bin/Xwayland /usr/bin/Xwayland.real
+    install -m 755 "$INSTALL_DIR/Xwayland-wrapper" /usr/bin/Xwayland
+    echo "  Xwayland wrapped (original at /usr/bin/Xwayland.real)"
 fi
 
-# Push Mali environment into systemd user instance so gnome-shell
-# and all gsd services inherit our vars
-systemctl --user import-environment \
-    GBM_BACKEND GBM_BACKENDS_PATH GSK_RENDERER GDK_BACKEND GDK_GL \
-    XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE \
-    MUTTER_DEBUG_FORCE_KMS_MODE HYBRIS_EGLPLATFORM LD_PRELOAD
-systemctl --user unset-environment __EGL_VENDOR_LIBRARY_FILENAMES
+if [ -e /usr/bin/brave-browser-stable ]; then
+    backup /usr/bin/brave-browser-stable
+    install -m 755 "$INSTALL_DIR/brave-gpu" /usr/local/bin/brave-gpu
+    install -m 755 "$INSTALL_DIR/brave-browser-stable-wrapper" /usr/bin/brave-browser-stable
+    echo "  Brave wrapped for GPU acceleration"
+    echo "  NOTE: a brave-browser package update restores the original launcher;"
+    echo "        re-run this installer if brave://gpu goes back to software."
+fi
 
-exec env -u __EGL_VENDOR_LIBRARY_FILENAMES \
-    gnome-session --session=gnome-mali \
-    2>&1 | tee /tmp/gnome-mali-session.log | systemd-cat -t gnome-mali
-SCRIPT
-chmod +x /usr/libexec/gnome-mali-session
-
-# -----------------------------------------------------------------------------
 # Step 5 — Wayland session desktop entry
 # -----------------------------------------------------------------------------
-echo "[5/7] Installing wayland session entry..."
+echo "[5/8] Installing wayland session entry..."
 backup /usr/share/wayland-sessions/gnome-mali.desktop
 
 cat > /usr/share/wayland-sessions/gnome-mali.desktop << 'EOF'
@@ -188,7 +203,7 @@ EOF
 # Step 6 — greetd config
 # No vendor wrapper needed for phrog — libhybris patch is transparent to phosh
 # -----------------------------------------------------------------------------
-echo "[6/7] Configuring greetd..."
+echo "[6/8] Configuring greetd..."
 backup /etc/greetd/phrog.toml
 
 cat > /etc/greetd/phrog.toml << 'EOF'

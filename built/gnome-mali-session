@@ -1,0 +1,93 @@
+#!/bin/bash
+# GNOME Mali session launcher — called by greetd via gnome-mali.desktop
+#
+# Pipeline:
+#   mutter → libEGL_libhybris.so (patched) → eglplatform_drmadapter.so → HWC2
+#
+# Uses gnome-session to properly start all GSD services including
+# gsd-power (screen lock) and gsd-media-keys.
+
+export GBM_BACKEND=hybris
+export GBM_BACKENDS_PATH=/usr/lib/aarch64-linux-gnu/gbm
+export GSK_RENDERER=gl
+export GDK_BACKEND=wayland
+export GDK_GL=gles
+export XDG_CURRENT_DESKTOP=GNOME
+export XDG_SESSION_DESKTOP=gnome
+export XDG_SESSION_TYPE=wayland
+export MUTTER_DEBUG_FORCE_KMS_MODE=simple
+export HYBRIS_EGLPLATFORM=drmadapter
+# Pin the phone form factor: the 1080x2412 panel at scale 2 gives a logical
+# width of 540, just over gnome-shell's width<500 phone heuristic, so the
+# shell would otherwise use the desktop layout.
+export MOBILE_SHELL_FORCE_PHONE=1
+# Measure the per-frame GPU-sync cost in libdrm-hybris (logs every 120 frames).
+# Drive HWC2 panel power from the CRTC ACTIVE property. Without this the
+# backlight goes to 0 on blank but the DSI panel and MediaTek display pipeline
+# keep clocking (~60 mtk_cmdq interrupts/sec with the screen dark), because
+# mutter's blank arrives as an atomic ACTIVE=0 commit and nothing translated it
+# into hwc2 setPowerMode. phoc calls drm_shim_panel_power() directly; mutter has
+# no equivalent, so the shim's ACTIVE path is used instead.
+# Experiment: mutter presents in eglSwapBuffers (present_cb), not inside the
+# page flip, so the vsync-aligned completion delay may be pure added latency.
+unset WLR_BACKENDS WLR_HWC_SKIP_VERSION_CHECK EGL_PLATFORM
+
+# Set LD_PRELOAD cleanly, preserving any existing system entries
+# libEGL.so.1 MUST come first. The shims below interpose GL/EGL symbols;
+# when they load ahead of libEGL, glvnd's dispatch resolves wrongly and
+# Qt5 clients cannot create a GL context ("Failed to create OpenGL context",
+# then "Unable to get texture ID" -> blank camera preview). Loading libEGL
+# first fixes every Qt5 GL app; verified with furios-camera and qmlscene.
+# xifevent-shim bounds mutter's X11 timestamp round-trip. XIfEvent() has no
+# timeout, so if Xwayland dies (it aborts here when it cannot take the single
+# HWC2 composer client) the next focus of a *Wayland* window hangs gnome-shell's
+# main loop in _XReadEvents() and freezes the whole desktop. The shim only
+# changes behaviour inside the compositor; every other client gets the real
+# blocking XIfEvent.
+MALI_PRELOAD="libEGL.so.1:/usr/lib/aarch64-linux-gnu/libdrm-hybris.so:/usr/local/lib/wlegl_server.so:/usr/local/lib/xifevent-shim.so"
+if [ -n "$LD_PRELOAD" ]; then
+    export LD_PRELOAD="$MALI_PRELOAD:$LD_PRELOAD"
+else
+    export LD_PRELOAD="$MALI_PRELOAD"
+fi
+
+# Push Mali environment into systemd user instance so gnome-shell
+# and all gsd services inherit our vars
+systemctl --user unset-environment XDG_SESSION_DESKTOP XDG_CURRENT_DESKTOP
+systemctl --user import-environment \
+    GBM_BACKEND GBM_BACKENDS_PATH GSK_RENDERER GDK_BACKEND GDK_GL \
+    XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE \
+    MUTTER_DEBUG_FORCE_KMS_MODE HYBRIS_EGLPLATFORM LD_PRELOAD XDG_SESSION_ID XDG_SEAT XDG_VTNR \
+    MOBILE_SHELL_FORCE_PHONE GNOME_SHELL_OSK_DEBUG GNOME_SHELL_WS_DEBUG LIBDRM_HYBRIS_SYNCSTATS LIBDRM_HYBRIS_SYNC LIBDRM_HYBRIS_ROWSTEP LIBDRM_HYBRIS_FAST_COMPLETE
+systemctl --user unset-environment __EGL_VENDOR_LIBRARY_FILENAMES
+
+# Force the desktop identity AFTER import-environment. logind/the phrog greeter
+# leave XDG_CURRENT_DESKTOP=Phosh:GNOME and XDG_SESSION_DESKTOP=phosh in the
+# (long-lived) systemd --user manager, and xdg-desktop-portal picks its backend
+# from that string: it matches "phosh" and loads the phosh/wlr backends, which
+# cannot work under mutter. Every portal call a GTK app makes then blocks until
+# it times out -- 39 portal timeouts in one boot, and GTK apps taking minutes to
+# appear while Qt apps (which barely use the portal) start instantly.
+systemctl --user set-environment XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_DESKTOP=gnome
+
+# Belt and braces: something in the login chain (greetd's session-worker sourcing
+# /etc/profile.d, or a late import-environment) has been observed putting
+# Phosh:GNOME back into the manager AFTER the line above runs, which is what made
+# GTK apps slow again after a relogin. Re-assert it over the first 30s of the
+# session -- xdg-desktop-portal is D-Bus activated, so it is usually started well
+# after us, by the first GTK app -- and log any drift so a regression is visible.
+(
+    for _ in $(seq 1 15); do
+        cur=$(systemctl --user show-environment 2>/dev/null | sed -n 's/^XDG_CURRENT_DESKTOP=//p')
+        if [ "$cur" != "GNOME" ]; then
+            echo "gnome-mali: XDG_CURRENT_DESKTOP drifted to '${cur}', reasserting GNOME" >&2
+            systemctl --user set-environment XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_DESKTOP=gnome
+        fi
+        sleep 2
+    done
+) &
+
+
+exec env -u __EGL_VENDOR_LIBRARY_FILENAMES \
+    gnome-session --session=gnome-mali \
+    2>&1 | tee /tmp/gnome-mali-session.log | systemd-cat -t gnome-mali

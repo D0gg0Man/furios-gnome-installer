@@ -1,0 +1,20 @@
+#!/bin/sh
+# Wrapper installed to give Brave GPU acceleration on FuriOS (Mali/hybris).
+# Replaces the symlink to /opt/brave.com/brave/brave-browser so EVERY launch
+# path picks it up -- desktop files, pinned favourites, xdg-open, the lot.
+# Reinstalling/upgrading the brave-browser package will restore the symlink;
+# re-run this wrapper install if acceleration disappears after an update.
+# Rationale for each setting is in /usr/local/bin/brave-gpu.
+exec env \
+  LD_PRELOAD=/usr/local/lib/rendernode-shim.so \
+  HYBRIS_EGLPLATFORM=drmadapter \
+  HYBRIS_EGLPLATFORM_DIR=/usr/local/lib/drmadapter-client \
+  GBM_BACKEND=hybris \
+  GBM_BACKENDS_PATH=/usr/lib/aarch64-linux-gnu/gbm \
+  VK_LOADER_DRIVERS_DISABLE='*' \
+  LIBDRM_HYBRIS_FORCE_GLES3=1 \
+  /opt/brave.com/brave/brave-browser \
+    --ozone-platform=wayland \
+    --render-node-override=/dev/dri/renderD128 \
+    --disable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan,SkiaGraphite \
+    "$@"

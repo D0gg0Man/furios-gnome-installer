@@ -1,0 +1,18 @@
+#!/bin/bash
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+STATE="/tmp/gnome-mali-lock-state"
+
+if [ ! -f "${STATE}.locked" ]; then
+    # Not locked — lock it
+    SESSION=$(loginctl list-sessions 2>/dev/null | awk -v uid="$(id -u)" '$2==uid && $4=="seat0" {print $1; exit}')
+    [ -z "$SESSION" ] && SESSION=$(loginctl list-sessions 2>/dev/null | awk -v uid="$(id -u)" '$2==uid {print $1; exit}')
+    [ -n "$SESSION" ] && loginctl lock-session "$SESSION"
+elif [ ! -f "${STATE}.showing" ]; then
+    # Locked + blanked — show PIN pad
+    touch "${STATE}.showing"
+    gdbus emit --session -o /org/gnome/mali/lock -s org.gnome.mali.Lock.WakeUp 2>/dev/null || true
+else
+    # Locked + showing PIN — blank again
+    rm -f "${STATE}.showing"
+    gdbus emit --session -o /org/gnome/mali/lock -s org.gnome.mali.Lock.Blank 2>/dev/null || true
+fi

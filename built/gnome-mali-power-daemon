@@ -1,0 +1,60 @@
+#!/usr/bin/python3
+import struct, os, subprocess, time
+
+KEY_POWER = 116
+EV_KEY = 1
+KEY_PRESS = 1
+STATE = '/tmp/gnome-mali-lock-state'
+DBUS_ENV = f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{os.getuid()}/bus"
+
+def run(cmd):
+    os.system(f"{DBUS_ENV} {cmd}")
+
+def get_session():
+    try:
+        out = subprocess.check_output(['loginctl','list-sessions'], text=True)
+        uid = str(os.getuid())
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and parts[1] == uid and parts[3] == 'seat0':
+                return parts[0]
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == uid:
+                return parts[0]
+    except: pass
+    return None
+
+fmt = 'llHHI'
+sz = struct.calcsize(fmt)
+
+# Debounce
+last_press = 0
+
+fd = open('/dev/input/event1', 'rb')
+while True:
+    data = fd.read(sz)
+    if not data or len(data) < sz:
+        break
+    tv_sec, tv_usec, etype, code, value = struct.unpack(fmt, data)
+    if etype != EV_KEY or code != KEY_POWER or value != KEY_PRESS:
+        continue
+    now = tv_sec + tv_usec/1e6
+    if now - last_press < 0.5:
+        continue
+    last_press = now
+
+    if not os.path.exists(f'{STATE}.locked'):
+        # Not locked — lock it
+        sess = get_session()
+        if sess:
+            os.system(f'loginctl lock-session {sess}')
+    elif not os.path.exists(f'{STATE}.showing'):
+        # Locked + blank — show PIN
+        open(f'{STATE}.showing', 'w').close()
+        run(f"gdbus emit --session -o /org/gnome/mali/lock -s org.gnome.mali.Lock.WakeUp")
+    else:
+        # Locked + showing — blank
+        try: os.unlink(f'{STATE}.showing')
+        except: pass
+        run(f"gdbus emit --session -o /org/gnome/mali/lock -s org.gnome.mali.Lock.Blank")

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Xwayland wrapper for FuriOS (Mali/hybris).
+#
+# Xwayland initialises hybris EGL, which routes to the drmadapter platform.
+# drmadapter calls hwc2_compat_device_new(); HWC2 permits ONE composer client
+# per system and mutter already holds it, so libhwc2_compat_layer prints
+#     failed to create composer client
+# and ABORTS -- Xwayland dies the moment any X11 client (andromeda, etc) causes
+# mutter to spawn it. That crash then FREEZES the whole desktop: mutter focusing
+# a Wayland window with timestamp=0 does an X11 round-trip
+# (meta_display_get_current_time_roundtrip -> XIfEvent) which never returns
+# against a dead server, so gnome-shell's main loop spins at 100%.
+#
+# Point Xwayland at the client-mode drmadapter build, which skips HWC2 init in
+# non-compositor processes. Scoped here so the compositor's own copy in
+# /usr/lib/.../libhybris is untouched.
+exec env HYBRIS_EGLPLATFORM_DIR=/usr/local/lib/drmadapter-client \
+  /usr/bin/Xwayland.real "$@"
