@@ -45,6 +45,7 @@ REQUIRED=(
     brave-gpu
     Xwayland-wrapper
     brave-browser-stable-wrapper
+    mutter-x11-frames-wrapper
     gnome-mali-lock-extension.js
     gnome-mali-lock-metadata.json
     gnome-mali-power-daemon
@@ -151,7 +152,7 @@ install -m 755 "$INSTALL_DIR/gnome-mali-session" /usr/libexec/gnome-mali-session
 
 # -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
-# Step 4b — Xwayland and Brave wrappers
+# Step 4b — Xwayland, frame-decoration and Brave wrappers
 #
 # Xwayland: it initialises hybris EGL, which routes to drmadapter, which tries
 # to take the single HWC2 composer client the compositor already holds --
@@ -165,13 +166,28 @@ install -m 755 "$INSTALL_DIR/gnome-mali-session" /usr/libexec/gnome-mali-session
 # Brave: Chromium needs a DRM render node, which this hardware has none of.
 # Optional -- skipped when Brave is not installed.
 # -----------------------------------------------------------------------------
-echo "[4b/8] Installing Xwayland and browser wrappers..."
+echo "[4b/8] Installing Xwayland, frame and browser wrappers..."
 
 if [ -f /usr/bin/Xwayland ] && [ ! -f /usr/bin/Xwayland.real ]; then
     backup /usr/bin/Xwayland
     mv /usr/bin/Xwayland /usr/bin/Xwayland.real
     install -m 755 "$INSTALL_DIR/Xwayland-wrapper" /usr/bin/Xwayland
     echo "  Xwayland wrapped (original at /usr/bin/Xwayland.real)"
+fi
+
+# mutter-x11-frames draws decorations for X11 windows, so it only starts once an
+# X11 client appears. It is a GTK4 app, and GTK4 initialises GL when it opens an
+# X11 display: gdk_x11_display_open -> gdk_display_prepare_gl -> eglInitialize ->
+# waylandws_eglInitialized -> wl_proxy_create_wrapper -> SIGSEGV. libhybris ends
+# up in its Wayland EGL platform inside an X11 client and makes a wl_proxy on
+# something that is not a wl_display. mutter respawns the helper immediately, so
+# it crash-loops, and each 13.5 MB core spawns a systemd-coredump that pins a
+# CPU core -- 4 GB of dumps accumulated on the test device before this was found.
+if [ -f /usr/libexec/mutter-x11-frames ] && [ ! -f /usr/libexec/mutter-x11-frames.real ]; then
+    backup /usr/libexec/mutter-x11-frames
+    mv /usr/libexec/mutter-x11-frames /usr/libexec/mutter-x11-frames.real
+    install -m 755 "$INSTALL_DIR/mutter-x11-frames-wrapper" /usr/libexec/mutter-x11-frames
+    echo "  mutter-x11-frames wrapped (original at .real)"
 fi
 
 if [ -e /usr/bin/brave-browser-stable ]; then

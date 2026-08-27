@@ -1,0 +1,20 @@
+#!/bin/sh
+# mutter-x11-frames draws server-side decorations for X11 windows. It is a GTK4
+# app, and GTK4 calls gdk_display_prepare_gl() when opening an X11 display:
+#
+#   gdk_x11_display_open -> gdk_display_prepare_gl -> eglInitialize
+#     -> ws_eglInitialized -> waylandws_eglInitialized (eglplatform_wayland.cpp)
+#       -> wl_proxy_create_wrapper -> SIGSEGV
+#
+# The session sets HYBRIS_EGLPLATFORM=drmadapter, but this process inherits a
+# WAYLAND_DISPLAY it does not use and libhybris ends up in its wayland platform
+# with an X11 native display -- it makes a wl_proxy on something that is not a
+# wl_display and dereferences garbage. mutter respawns the helper immediately,
+# so it crash-loops and every crash spawns a systemd-coredump that pins a core.
+#
+# Frame decorations need no GL, so keep GTK4 off the GL path and give libhybris
+# a platform that cannot touch Wayland if it gets there anyway.
+exec env HYBRIS_EGLPLATFORM=null \
+         GDK_DISABLE=gl,vulkan \
+         GSK_RENDERER=cairo \
+    /usr/libexec/mutter-x11-frames.real "$@"

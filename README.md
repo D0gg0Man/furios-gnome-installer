@@ -69,6 +69,7 @@ Enable with: `G_MESSAGES_DEBUG=all`
 | `xifevent-shim.so` | `/usr/local/lib/`, session `LD_PRELOAD` | Bounds mutter's X11 timestamp round-trip. `XIfEvent()` has no timeout, so a dead Xwayland would otherwise freeze the whole desktop. |
 | `rendernode-shim.so` | `/usr/local/lib/` | Presents a synthetic DRM render node to Chromium, which needs one and this hardware has none. |
 | `Xwayland` wrapper | `/usr/bin/` (original at `Xwayland.real`) | Points Xwayland at the client-mode drmadapter so it does not abort on startup. |
+| `mutter-x11-frames` wrapper | `/usr/libexec/` (original at `.real`) | Keeps GTK4's X11 frame helper off the GL path. Without it libhybris uses its Wayland EGL platform inside an X11 client and segfaults, and mutter respawns it in a loop — every crash spawning a coredump that pins a CPU core. |
 | `brave-gpu` | `/usr/local/bin/` | Launches Brave with the flags and environment that give it GPU acceleration. |
 
 ## Notes
