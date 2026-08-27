@@ -37,14 +37,11 @@ REQUIRED=(
     eglplatform_drmadapter.so
     eglplatform_drmadapter_client.so
     libdrm-hybris.so
-    rendernode-shim.so
     xifevent-shim.so
     wlegl_server.so
     vulkan_x11_stub.so
     gnome-mali-session
-    brave-gpu
     Xwayland-wrapper
-    brave-browser-stable-wrapper
     mutter-x11-frames-wrapper
     gnome-mali-lock-extension.js
     gnome-mali-lock-metadata.json
@@ -94,7 +91,6 @@ echo "[2/8] Installing drmadapter platform and shim libraries..."
 backup /usr/lib/aarch64-linux-gnu/libdrm-hybris.so
 backup /usr/local/lib/wlegl_server.so
 backup /usr/local/lib/vulkan_x11_stub.so
-backup /usr/local/lib/rendernode-shim.so
 backup /usr/local/lib/xifevent-shim.so
 
 mkdir -p "$HYBRIS_PLATFORM_DIR"
@@ -117,7 +113,6 @@ install -m 755 "$INSTALL_DIR/eglplatform_drmadapter_client.so" \
 install -m 755 "$INSTALL_DIR/libdrm-hybris.so" /usr/lib/aarch64-linux-gnu/libdrm-hybris.so
 install -m 755 "$INSTALL_DIR/wlegl_server.so"    /usr/local/lib/wlegl_server.so
 install -m 755 "$INSTALL_DIR/vulkan_x11_stub.so" /usr/local/lib/vulkan_x11_stub.so
-install -m 755 "$INSTALL_DIR/rendernode-shim.so" /usr/local/lib/rendernode-shim.so
 install -m 755 "$INSTALL_DIR/xifevent-shim.so"   /usr/local/lib/xifevent-shim.so
 
 # Retire the superseded shim so both cannot be preloaded at once.
@@ -152,7 +147,7 @@ install -m 755 "$INSTALL_DIR/gnome-mali-session" /usr/libexec/gnome-mali-session
 
 # -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
-# Step 4b — Xwayland, frame-decoration and Brave wrappers
+# Step 4b — Xwayland and frame-decoration wrappers
 #
 # Xwayland: it initialises hybris EGL, which routes to drmadapter, which tries
 # to take the single HWC2 composer client the compositor already holds --
@@ -163,10 +158,8 @@ install -m 755 "$INSTALL_DIR/gnome-mali-session" /usr/libexec/gnome-mali-session
 # the abort; xifevent-shim in the session wrapper bounds the round-trip so a
 # dead X server cannot hang the compositor either way.
 #
-# Brave: Chromium needs a DRM render node, which this hardware has none of.
-# Optional -- skipped when Brave is not installed.
 # -----------------------------------------------------------------------------
-echo "[4b/8] Installing Xwayland, frame and browser wrappers..."
+echo "[4b/8] Installing Xwayland and frame wrappers..."
 
 if [ -f /usr/bin/Xwayland ] && [ ! -f /usr/bin/Xwayland.real ]; then
     backup /usr/bin/Xwayland
@@ -188,15 +181,6 @@ if [ -f /usr/libexec/mutter-x11-frames ] && [ ! -f /usr/libexec/mutter-x11-frame
     mv /usr/libexec/mutter-x11-frames /usr/libexec/mutter-x11-frames.real
     install -m 755 "$INSTALL_DIR/mutter-x11-frames-wrapper" /usr/libexec/mutter-x11-frames
     echo "  mutter-x11-frames wrapped (original at .real)"
-fi
-
-if [ -e /usr/bin/brave-browser-stable ]; then
-    backup /usr/bin/brave-browser-stable
-    install -m 755 "$INSTALL_DIR/brave-gpu" /usr/local/bin/brave-gpu
-    install -m 755 "$INSTALL_DIR/brave-browser-stable-wrapper" /usr/bin/brave-browser-stable
-    echo "  Brave wrapped for GPU acceleration"
-    echo "  NOTE: a brave-browser package update restores the original launcher;"
-    echo "        re-run this installer if brave://gpu goes back to software."
 fi
 
 # Step 5 — Wayland session desktop entry

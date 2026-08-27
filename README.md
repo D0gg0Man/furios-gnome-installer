@@ -67,10 +67,8 @@ Enable with: `G_MESSAGES_DEBUG=all`
 | `eglplatform_drmadapter.so` | `libhybris/` | The hybris EGL platform the compositor renders through. |
 | `eglplatform_drmadapter.so` (client build) | `/usr/local/lib/drmadapter-client/` | Same platform with HWC2 init skipped. HWC2 allows one composer client per system and the compositor holds it, so any other process loading the normal build aborts. Selected per-process with `HYBRIS_EGLPLATFORM_DIR`. |
 | `xifevent-shim.so` | `/usr/local/lib/`, session `LD_PRELOAD` | Bounds mutter's X11 timestamp round-trip. `XIfEvent()` has no timeout, so a dead Xwayland would otherwise freeze the whole desktop. |
-| `rendernode-shim.so` | `/usr/local/lib/` | Presents a synthetic DRM render node to Chromium, which needs one and this hardware has none. |
 | `Xwayland` wrapper | `/usr/bin/` (original at `Xwayland.real`) | Points Xwayland at the client-mode drmadapter so it does not abort on startup. |
 | `mutter-x11-frames` wrapper | `/usr/libexec/` (original at `.real`) | Keeps GTK4's X11 frame helper off the GL path. Without it libhybris uses its Wayland EGL platform inside an X11 client and segfaults, and mutter respawns it in a loop — every crash spawning a coredump that pins a CPU core. |
-| `brave-gpu` | `/usr/local/bin/` | Launches Brave with the flags and environment that give it GPU acceleration. |
 
 ## Notes
 
@@ -80,6 +78,3 @@ Enable with: `G_MESSAGES_DEBUG=all`
   `LIBDRM_HYBRIS_SYNC=touch` and `_ROWSTEP=64` exported from the session or the
   compositor silently fell back to a full buffer copy per frame (~30 fps).
   Those are defaults now; the variables remain only as debugging overrides.
-* A `brave-browser` package update replaces the wrapped launcher and silently
-  drops GPU acceleration. Check `brave://gpu` for `--render-node-override` in
-  the command line, and re-run the installer if it is missing.
